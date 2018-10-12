@@ -31,3 +31,53 @@ Saving cache after build pipeline:
 ```
 casher push -b my-cicd-bucket -k cache/my-app/PR-1
 ```
+
+### Jenkins Pipeline Example
+
+Having a simple `withCaching.groovy` script that wraps a body of work by fetching & adding before and pushing any changes after.
+
+```groovy
+#!/usr/bin/groovy
+
+def call(Map config = [:], body) {
+  def awsRegion = config.get('awsRegion', 'us-east-1')
+  def cacheBucket = config.get('cacheBucket', 'my-cicd-bucket')
+  def cacheDirectories = config.get('cacheDirectories', [])
+  def jobBaseName = "${env.JOB_NAME}".split('/').tail().join("/")
+
+  if (cacheDirectories.size > 0) {
+    def cacheDirs = cacheDirectories.join(' -p ')
+
+    stage('loading cache') {
+      container('cacher') {
+        withAWSRole() {
+          sh "casher fetch -r ${awsRegion} -b ${cacheBucket} -k cache/${jobBaseName}"
+          sh "casher add -p ${cacheDirs}"
+        }
+      }
+    }
+
+    body()
+
+    stage('store build cache') {
+      container('cacher') {
+        withAWSRole() {
+          sh "casher push -r ${awsRegion} -b ${cacheBucket} -k cache/${jobBaseName}"
+        }
+      }
+    }
+  } else {
+    body()
+  }
+}
+```
+
+Example usage:
+
+```groovy
+container('scala') {
+  withCaching(cacheDirectories: ['/root/.sbt/boot', '/root/.ivy2']) {
+    sh "sbt clean test"
+  }
+}
+```
